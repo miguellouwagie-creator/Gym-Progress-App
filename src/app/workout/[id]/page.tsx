@@ -7,13 +7,12 @@ import { Button, Card, WeightStepper, RepsStepper } from '@/components/ui';
 import {
     db,
     searchExercises,
-    logSet,
     getSetsForWorkout,
     getPreviousSetsForExercise,
     finishWorkout,
-    updateSet,
     deleteSet,
     getExercisesForDay,
+    getOrCreateExercise,
     type ExerciseSet,
     type Exercise,
     type Workout,
@@ -196,11 +195,15 @@ export default function WorkoutPage({
     const handleDeleteExercise = async (exerciseIndex: number) => {
         const ex = exercises[exerciseIndex];
 
-        const deletePromises = ex.sets
-            .filter(set => set.id)
-            .map(set => deleteSet(set.id!));
+        // Delete all sets in a transaction
+        await db.transaction('rw', db.sets, async () => {
+            for (const set of ex.sets) {
+                if (set.id) {
+                    await db.sets.delete(set.id);
+                }
+            }
+        });
 
-        await Promise.all(deletePromises);
         setExercises(prev => prev.filter((_, i) => i !== exerciseIndex));
     };
 
@@ -222,51 +225,76 @@ export default function WorkoutPage({
         const ex = exercises[exerciseIndex];
         const trimmedName = newName.trim();
 
-        const updatePromises = ex.sets
-            .filter(set => set.id)
-            .map(set => db.sets.update(set.id!, { exerciseName: trimmedName }));
-
-        await Promise.all(updatePromises);
+        // Update in transaction
+        await db.transaction('rw', db.sets, async () => {
+            for (const set of ex.sets) {
+                if (set.id) {
+                    await db.sets.update(set.id, { exerciseName: trimmedName });
+                }
+            }
+        });
 
         setExercises(prev => prev.map((e, i) =>
             i === exerciseIndex ? { ...e, name: trimmedName, originalName: trimmedName, isEditing: false } : e
         ));
     };
 
-    // CRITICAL FIX: Use Promise.all to wait for ALL DB operations
+    // CRITICAL FIX: Use Dexie Transaction for atomicity - no race conditions
     const handleFinish = async () => {
         setIsSaving(true);
 
         try {
-            const promises: Promise<number | void>[] = [];
+            // Use a READ-WRITE Transaction to ensure atomicity
+            await db.transaction('rw', db.sets, db.exercises, db.workouts, async () => {
 
-            // Loop through ALL blocks and ALL sets
-            for (const block of exercises) {
-                // Skip empty blocks
-                if (block.sets.length === 0) continue;
+                // 1. Loop through each Exercise Block SEQUENTIALLY
+                for (const block of exercises) {
+                    // Skip empty blocks
+                    if (block.sets.length === 0) continue;
 
-                for (const set of block.sets) {
-                    if (set.id) {
-                        // Update existing set
-                        promises.push(updateSet(set.id, set.weight, set.reps));
-                    } else {
-                        // Create new set
-                        promises.push(logSet(workoutId, block.name, set.weight, set.reps, dayIndex));
+                    // Ensure exercise exists in exercises table
+                    await getOrCreateExercise(block.name);
+
+                    // 2. Loop through Sets with Index to force correct Set Number
+                    for (let i = 0; i < block.sets.length; i++) {
+                        const set = block.sets[i];
+                        const setNumber = i + 1; // Trust UI order
+
+                        if (set.id) {
+                            // UPDATE: Update everything (Weight, Reps, Name, Order)
+                            await db.sets.update(set.id, {
+                                weight: set.weight,
+                                reps: set.reps,
+                                exerciseName: block.name,
+                                setNumber: setNumber,
+                            });
+                        } else {
+                            // CREATE: Add new set manually (avoids logSet race condition)
+                            await db.sets.add({
+                                workoutId,
+                                exerciseName: block.name,
+                                setNumber: setNumber,
+                                weight: set.weight,
+                                reps: set.reps,
+                                dayOfWeek: dayIndex,
+                                timestamp: new Date().toISOString(),
+                            });
+                        }
                     }
                 }
-            }
 
-            // CRITICAL: Wait for ALL DB operations to finish
-            await Promise.all(promises);
+                // 3. Mark Workout as Completed
+                await db.workouts.update(workoutId, {
+                    completedAt: new Date().toISOString(),
+                });
+            });
 
-            // Mark workout as complete
-            await finishWorkout(workoutId);
-
-            // ONLY THEN navigate
+            // 4. Success -> Redirect
             router.push('/');
+
         } catch (error) {
-            console.error("Save failed:", error);
-            alert("Error guardando. Intenta de nuevo.");
+            console.error("Transaction failed:", error);
+            alert("Error crítico al guardar. Tu entrenamiento no se ha perdido. Inténtalo de nuevo.");
             setIsSaving(false);
         }
     };
