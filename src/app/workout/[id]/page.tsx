@@ -24,15 +24,15 @@ interface SetRow {
     weight: number;
     reps: number;
     isNew?: boolean;
-    isDirty?: boolean; // Track if user modified this set
+    isDirty?: boolean;
 }
 
 interface ExerciseBlock {
     name: string;
     sets: SetRow[];
     previousSets: { weight: number; reps: number }[];
-    isEditing?: boolean; // For renaming
-    originalName?: string; // To track renames
+    isEditing?: boolean;
+    originalName?: string;
 }
 
 export default function WorkoutPage({
@@ -54,7 +54,7 @@ export default function WorkoutPage({
     const [suggestions, setSuggestions] = useState<Exercise[]>([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -66,7 +66,6 @@ export default function WorkoutPage({
             }
             setWorkout(w);
 
-            // Load existing sets grouped by exercise
             const sets = await getSetsForWorkout(workoutId);
             const grouped = new Map<string, ExerciseSet[]>();
 
@@ -94,7 +93,6 @@ export default function WorkoutPage({
                 });
             }
 
-            // If no exercises yet, suggest exercises from previous sessions on this day
             if (blocks.length === 0) {
                 const dayExercises = await getExercisesForDay(dayIndex);
                 for (const ex of dayExercises.slice(0, 5)) {
@@ -117,7 +115,6 @@ export default function WorkoutPage({
         load();
     }, [workoutId, router, dayIndex]);
 
-    // Autocomplete search - prioritize exercises used on this day
     useEffect(() => {
         async function search() {
             if (newExerciseName.length > 0) {
@@ -136,7 +133,6 @@ export default function WorkoutPage({
     const addExercise = async (name: string) => {
         if (!name.trim()) return;
 
-        // Check if already added
         if (exercises.some(e => e.name.toLowerCase() === name.toLowerCase())) {
             setNewExerciseName('');
             setShowSuggestions(false);
@@ -182,7 +178,6 @@ export default function WorkoutPage({
         }));
     };
 
-    // Delete single set
     const handleDeleteSet = async (exerciseIndex: number, setIndex: number) => {
         const ex = exercises[exerciseIndex];
         const set = ex.sets[setIndex];
@@ -198,76 +193,82 @@ export default function WorkoutPage({
         }).filter(e => e.sets.length > 0));
     };
 
-    // Delete entire exercise block
     const handleDeleteExercise = async (exerciseIndex: number) => {
         const ex = exercises[exerciseIndex];
 
-        // Delete all sets for this exercise from DB
-        for (const set of ex.sets) {
-            if (set.id) {
-                await deleteSet(set.id);
-            }
-        }
+        const deletePromises = ex.sets
+            .filter(set => set.id)
+            .map(set => deleteSet(set.id!));
 
-        // Remove from UI
+        await Promise.all(deletePromises);
         setExercises(prev => prev.filter((_, i) => i !== exerciseIndex));
     };
 
-    // Start renaming exercise
     const startRenameExercise = (exerciseIndex: number) => {
         setExercises(prev => prev.map((ex, i) =>
             i === exerciseIndex ? { ...ex, isEditing: true } : ex
         ));
     };
 
-    // Cancel rename
     const cancelRenameExercise = (exerciseIndex: number) => {
         setExercises(prev => prev.map((ex, i) =>
             i === exerciseIndex ? { ...ex, isEditing: false, name: ex.originalName || ex.name } : ex
         ));
     };
 
-    // Confirm rename - update all sets in DB
     const confirmRenameExercise = async (exerciseIndex: number, newName: string) => {
         if (!newName.trim()) return;
 
         const ex = exercises[exerciseIndex];
         const trimmedName = newName.trim();
 
-        // Update all existing sets in DB with new exercise name
-        for (const set of ex.sets) {
-            if (set.id) {
-                await db.sets.update(set.id, { exerciseName: trimmedName });
-            }
-        }
+        const updatePromises = ex.sets
+            .filter(set => set.id)
+            .map(set => db.sets.update(set.id!, { exerciseName: trimmedName }));
 
-        // Update UI
+        await Promise.all(updatePromises);
+
         setExercises(prev => prev.map((e, i) =>
             i === exerciseIndex ? { ...e, name: trimmedName, originalName: trimmedName, isEditing: false } : e
         ));
     };
 
-    // CRITICAL: Save All Strategy - update ALL sets on finish
+    // CRITICAL FIX: Use Promise.all to wait for ALL DB operations
     const handleFinish = async () => {
-        setSaving(true);
+        setIsSaving(true);
 
-        for (const exercise of exercises) {
-            // Skip empty exercise blocks (ghost blocks)
-            if (exercise.sets.length === 0) continue;
+        try {
+            const promises: Promise<number | void>[] = [];
 
-            for (const set of exercise.sets) {
-                if (set.id) {
-                    // ALWAYS update existing sets (even if not marked dirty - ensures data integrity)
-                    await updateSet(set.id, set.weight, set.reps);
-                } else {
-                    // Create new sets
-                    await logSet(workoutId, exercise.name, set.weight, set.reps, dayIndex);
+            // Loop through ALL blocks and ALL sets
+            for (const block of exercises) {
+                // Skip empty blocks
+                if (block.sets.length === 0) continue;
+
+                for (const set of block.sets) {
+                    if (set.id) {
+                        // Update existing set
+                        promises.push(updateSet(set.id, set.weight, set.reps));
+                    } else {
+                        // Create new set
+                        promises.push(logSet(workoutId, block.name, set.weight, set.reps, dayIndex));
+                    }
                 }
             }
-        }
 
-        await finishWorkout(workoutId);
-        router.push('/');
+            // CRITICAL: Wait for ALL DB operations to finish
+            await Promise.all(promises);
+
+            // Mark workout as complete
+            await finishWorkout(workoutId);
+
+            // ONLY THEN navigate
+            router.push('/');
+        } catch (error) {
+            console.error("Save failed:", error);
+            alert("Error guardando. Intenta de nuevo.");
+            setIsSaving(false);
+        }
     };
 
     if (loading) {
@@ -292,8 +293,8 @@ export default function WorkoutPage({
                     <h1 className="text-lg font-bold text-white">{focus}</h1>
                     <p className="text-xs text-[#71717a]">{workout?.name}</p>
                 </div>
-                <Button variant="primary" size="sm" onClick={handleFinish} disabled={saving}>
-                    {saving ? (
+                <Button variant="primary" size="sm" onClick={handleFinish} disabled={isSaving}>
+                    {isSaving ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
                         <>
@@ -319,7 +320,6 @@ export default function WorkoutPage({
                     className="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-white placeholder:text-[#3f3f46] focus:border-[#FF0000] transition-colors"
                 />
 
-                {/* Suggestions Dropdown */}
                 {showSuggestions && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-[#09090b] border border-[#27272a] rounded-lg overflow-hidden z-10 max-h-48 overflow-y-auto">
                         {suggestions.map((ex) => (
@@ -349,7 +349,7 @@ export default function WorkoutPage({
             <div className="space-y-4">
                 {exercises.map((exercise, exerciseIndex) => (
                     <Card key={`${exercise.name}-${exerciseIndex}`}>
-                        {/* Exercise Header with Management Controls */}
+                        {/* Exercise Header */}
                         <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-2 flex-1">
                                 {exercise.isEditing ? (
@@ -406,14 +406,13 @@ export default function WorkoutPage({
                                 <button
                                     onClick={() => handleDeleteExercise(exerciseIndex)}
                                     className="w-8 h-8 rounded flex items-center justify-center text-[#ef4444] hover:bg-[#ef4444]/10"
-                                    title="Eliminar ejercicio"
                                 >
                                     <Trash2 className="w-4 h-4" />
                                 </button>
                             </div>
                         </div>
 
-                        {/* Previous Session Stats */}
+                        {/* Previous Stats */}
                         {exercise.previousSets.length > 0 && (
                             <p className="text-xs text-[#DC2626] mb-3 flex items-center gap-1">
                                 <History className="w-3 h-3" />
@@ -435,7 +434,6 @@ export default function WorkoutPage({
                                         {setIndex + 1}
                                     </span>
 
-                                    {/* Weight */}
                                     <div className="flex-1">
                                         <WeightStepper
                                             value={set.weight}
@@ -445,7 +443,6 @@ export default function WorkoutPage({
 
                                     <span className="text-[#3f3f46] text-lg">×</span>
 
-                                    {/* Reps */}
                                     <div className="flex-1">
                                         <RepsStepper
                                             value={set.reps}
@@ -453,7 +450,6 @@ export default function WorkoutPage({
                                         />
                                     </div>
 
-                                    {/* Delete Set */}
                                     <button
                                         onClick={() => handleDeleteSet(exerciseIndex, setIndex)}
                                         className="w-8 h-8 rounded flex items-center justify-center text-[#ef4444] hover:bg-[#ef4444]/10"
@@ -475,7 +471,7 @@ export default function WorkoutPage({
             )}
 
             {/* Saving Overlay */}
-            {saving && (
+            {isSaving && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
                     <div className="flex flex-col items-center gap-4">
                         <div className="w-10 h-10 border-4 border-[#FF0000] border-t-transparent rounded-full animate-spin" />
