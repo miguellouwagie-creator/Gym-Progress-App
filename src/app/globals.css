@@ -1,0 +1,174 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   TITAN LOG - iOS-Grade Dark Theme
+   ============================================================================ */
+
+:root {
+  /* Core Colors */
+  --background: #000000;
+  --surface: #1C1C1E;
+  --surface-elevated: #2C2C2E;
+  
+  /* Brand Colors */
+  --primary: #0A84FF;
+  --primary-dim: rgba(10, 132, 255, 0.15);
+  --accent: #30D158;
+  --accent-dim: rgba(48, 209, 88, 0.15);
+  --warning: #FF9F0A;
+  --error: #FF453A;
+  
+  /* Text Colors */
+  --text-primary: #FFFFFF;
+  --text-secondary: #8E8E93;
+  --text-tertiary: #636366;
+  
+  /* Misc */
+  --border: #38383A;
+  --glow-primary: rgba(10, 132, 255, 0.4);
+  --glow-accent: rgba(48, 209, 88, 0.4);
+  
+  /* Safe areas for iOS */
+  --safe-area-top: env(safe-area-inset-top);
+  --safe-area-bottom: env(safe-area-inset-bottom);
+}
+
+/* ============================================================================
+   BASE STYLES
+   ============================================================================ */
+
+html {
+  background: var(--background);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  
+  /* Disable pull-to-refresh */
+  overscroll-behavior: none;
+  
+  /* Prevent zoom on input focus (iOS) */
+  touch-action: manipulation;
+}
+
+body {
+  background: var(--background);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding-bottom: calc(80px + var(--safe-area-bottom));
+}
+
+/* Prevent text selection on interactive elements */
+button, a, [role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+
+/* iOS Blur Effect */
+.glass {
+  background: rgba(28, 28, 30, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Neon Glow Effects */
+.glow-primary {
+  box-shadow: 0 0 20px var(--glow-primary), 0 0 40px var(--glow-primary);
+}
+
+.glow-accent {
+  box-shadow: 0 0 20px var(--glow-accent), 0 0 40px var(--glow-accent);
+}
+
+/* Touch-friendly button base (44px minimum) */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Card Surface */
+.surface {
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.surface-elevated {
+  background: var(--surface-elevated);
+  border-radius: 12px;
+}
+
+/* Text Styles */
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-tertiary {
+  color: var(--text-tertiary);
+}
+
+/* ============================================================================
+   SCROLLBAR (Hidden for iOS feel)
+   ============================================================================ */
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+* {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ============================================================================
+   ANIMATIONS
+   ============================================================================ */
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 20px var(--glow-primary);
+  }
+  50% {
+    box-shadow: 0 0 30px var(--glow-primary), 0 0 50px var(--glow-primary);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ============================================================================
+   INPUTS (Override browser defaults)
+   ============================================================================ */
+
+input[type="number"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  padding: 12px;
+  width: 100%;
+  appearance: textfield;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
