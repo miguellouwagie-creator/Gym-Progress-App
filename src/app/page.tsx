@@ -2,25 +2,25 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Dumbbell, ChevronRight, Flame, Moon } from 'lucide-react';
+import { Dumbbell, ChevronRight, Flame, Moon, Plus } from 'lucide-react';
 import { Card } from '@/components/ui';
 import { StaggerContainer, StaggerItem } from '@/components/PageTransition';
-import { getActiveWorkout, startWorkout } from '@/lib/db';
+import { startWorkout } from '@/lib/db';
 
-// Fixed Weekly Schedule in Spanish
+// He eliminado "isRest" como bloqueo. Ahora es solo visual.
 const WEEKLY_SCHEDULE = [
-  { day: 0, name: 'Lunes', focus: 'Descanso', isRest: true },
-  { day: 1, name: 'Martes', focus: 'Pierna (Cuádriceps)', isRest: false },
-  { day: 2, name: 'Miércoles', focus: 'Espalda y Bíceps', isRest: false },
-  { day: 3, name: 'Jueves', focus: 'Pecho, Hombro, Tríceps', isRest: false },
-  { day: 4, name: 'Viernes', focus: 'Descanso', isRest: true },
-  { day: 5, name: 'Sábado', focus: 'Pierna (Isquios)', isRest: false },
-  { day: 6, name: 'Domingo', focus: 'Mix (Espalda, Hombro, Brazos)', isRest: false },
+  { day: 0, name: 'Lunes', focus: 'Descanso / Ajustar', isVisualRest: true },
+  { day: 1, name: 'Martes', focus: 'Pierna (Cuádriceps)', isVisualRest: false },
+  { day: 2, name: 'Miércoles', focus: 'Espalda y Bíceps', isVisualRest: false },
+  { day: 3, name: 'Jueves', focus: 'Pecho, Hombro, Tríceps', isVisualRest: false },
+  { day: 4, name: 'Viernes', focus: 'Descanso / Ajustar', isVisualRest: true },
+  { day: 5, name: 'Sábado', focus: 'Pierna (Isquios)', isVisualRest: false },
+  { day: 6, name: 'Domingo', focus: 'Mix (Espalda, Hombro, Brazos)', isVisualRest: false },
 ];
 
 function getTodayIndex(): number {
-  const jsDay = new Date().getDay(); // 0 = Sunday
-  // Convert to 0 = Monday
+  const jsDay = new Date().getDay(); // 0 = Domingo en JS
+  // Convertimos para que 0 sea Lunes
   return jsDay === 0 ? 6 : jsDay - 1;
 }
 
@@ -29,12 +29,12 @@ export default function HomePage() {
   const [todayIndex] = useState(getTodayIndex());
   const [loading, setLoading] = useState(false);
 
-  const handleDayClick = async (dayIndex: number, focus: string, isRest: boolean) => {
-    if (isRest) return; // Don't allow entering rest days
-
+  const handleDayClick = async (dayIndex: number, focus: string) => {
     setLoading(true);
 
-    // Create or get today's workout for this day
+    // Creamos el entrenamiento para ese día.
+    // NOTA: Al entrar y añadir ejercicios, la app "aprenderá" y te los sugerirá
+    // automáticamente la próxima vez que entres en este día de la semana.
     const workoutName = `${WEEKLY_SCHEDULE[dayIndex].name}: ${focus}`;
     const workoutId = await startWorkout(workoutName);
 
@@ -54,39 +54,38 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Today's Highlight */}
-      {!WEEKLY_SCHEDULE[todayIndex].isRest && (
-        <Card
-          onClick={() => handleDayClick(
-            todayIndex,
-            WEEKLY_SCHEDULE[todayIndex].focus,
-            WEEKLY_SCHEDULE[todayIndex].isRest
-          )}
-          active
-          className="mb-6 animate-pulse-red"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#FF0000] flex items-center justify-center">
-                <Flame className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <p className="text-xs text-[#FF0000] font-bold uppercase tracking-wide">
-                  Hoy - {WEEKLY_SCHEDULE[todayIndex].name}
-                </p>
-                <h2 className="text-lg font-bold text-white">
-                  {WEEKLY_SCHEDULE[todayIndex].focus}
-                </h2>
-              </div>
+      {/* Tarjeta de HOY (Siempre visible y activa) */}
+      <Card
+        onClick={() => handleDayClick(
+          todayIndex,
+          WEEKLY_SCHEDULE[todayIndex].focus
+        )}
+        active
+        className="mb-6 animate-pulse-red border-l-4 border-l-[#FF0000]"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-lg bg-[#FF0000] flex items-center justify-center">
+              <Flame className="w-6 h-6 text-white" />
             </div>
-            <ChevronRight className="w-5 h-5 text-[#FF0000]" />
+            <div>
+              <p className="text-xs text-[#FF0000] font-bold uppercase tracking-wide">
+                Hoy - {WEEKLY_SCHEDULE[todayIndex].name}
+              </p>
+              <h2 className="text-lg font-bold text-white">
+                {WEEKLY_SCHEDULE[todayIndex].focus}
+              </h2>
+            </div>
           </div>
-        </Card>
-      )}
+          <div className="bg-[#FF0000]/20 p-2 rounded-full">
+            <Plus className="w-5 h-5 text-[#FF0000]" />
+          </div>
+        </div>
+      </Card>
 
-      {/* Weekly Schedule */}
+      {/* Lista Semanal Completa */}
       <h2 className="text-xs font-semibold text-[#71717a] uppercase tracking-wider mb-3">
-        Programa Semanal
+        Configurar / Entrenar
       </h2>
 
       <StaggerContainer>
@@ -97,47 +96,46 @@ export default function HomePage() {
             return (
               <StaggerItem key={schedule.day}>
                 <Card
-                  onClick={!schedule.isRest ? () => handleDayClick(index, schedule.focus, schedule.isRest) : undefined}
+                  // AHORA SÍ: El click funciona siempre, incluso en descanso
+                  onClick={() => handleDayClick(index, schedule.focus)}
                   active={isToday}
                   className={`
-                    ${schedule.isRest ? 'opacity-40' : ''}
-                    ${!schedule.isRest ? 'cursor-pointer' : 'cursor-default'}
+                    cursor-pointer hover:border-[#FF0000]/50 transition-colors
+                    ${schedule.isVisualRest ? 'opacity-60 border-dashed' : ''}
                   `}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      {/* Day Icon */}
+                      {/* Icono del día */}
                       <div className={`
                         w-10 h-10 rounded-lg flex items-center justify-center
-                        ${isToday ? 'bg-[#FF0000]' : schedule.isRest ? 'bg-[#18181b]' : 'bg-[#27272a]'}
+                        ${isToday ? 'bg-[#FF0000]' : schedule.isVisualRest ? 'bg-[#18181b] border border-[#27272a]' : 'bg-[#27272a]'}
                       `}>
-                        {schedule.isRest ? (
+                        {schedule.isVisualRest ? (
                           <Moon className={`w-4 h-4 ${isToday ? 'text-white' : 'text-[#3f3f46]'}`} />
                         ) : (
                           <Dumbbell className={`w-4 h-4 ${isToday ? 'text-white' : 'text-[#a1a1aa]'}`} />
                         )}
                       </div>
 
-                      {/* Day Info */}
+                      {/* Información */}
                       <div>
                         <p className={`
                           font-semibold
-                          ${isToday ? 'text-[#FF0000]' : schedule.isRest ? 'text-[#3f3f46]' : 'text-white'}
+                          ${isToday ? 'text-[#FF0000]' : schedule.isVisualRest ? 'text-[#71717a]' : 'text-white'}
                         `}>
                           {schedule.name}
                         </p>
                         <p className={`
                           text-sm
-                          ${schedule.isRest ? 'text-[#27272a]' : 'text-[#71717a]'}
+                          ${schedule.isVisualRest ? 'text-[#3f3f46]' : 'text-[#71717a]'}
                         `}>
                           {schedule.focus}
                         </p>
                       </div>
                     </div>
 
-                    {!schedule.isRest && (
-                      <ChevronRight className={`w-4 h-4 ${isToday ? 'text-[#FF0000]' : 'text-[#3f3f46]'}`} />
-                    )}
+                    <ChevronRight className={`w-4 h-4 ${isToday ? 'text-[#FF0000]' : 'text-[#3f3f46]'}`} />
                   </div>
                 </Card>
               </StaggerItem>
@@ -147,8 +145,11 @@ export default function HomePage() {
       </StaggerContainer>
 
       {loading && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="w-8 h-8 border-2 border-[#FF0000] border-t-transparent rounded-full animate-spin" />
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-10 h-10 border-4 border-[#FF0000] border-t-transparent rounded-full animate-spin" />
+            <p className="text-[#FF0000] font-bold animate-pulse">CARGANDO SESIÓN...</p>
+          </div>
         </div>
       )}
     </div>
