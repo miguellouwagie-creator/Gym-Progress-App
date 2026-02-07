@@ -263,7 +263,29 @@ export default function WorkoutPage({
             // Use a READ-WRITE Transaction to ensure atomicity
             await db.transaction('rw', db.sets, db.exercises, db.workouts, async () => {
 
-                // 1. Loop through each Exercise Block SEQUENTIALLY
+                // --- STEP 1: DETECT DELETIONS (Sync Fix) ---
+                // Fetch all sets currently stored in DB for this workout
+                const storedSets = await db.sets.where('workoutId').equals(workoutId).toArray();
+
+                // Collect all Set IDs currently valid in the UI
+                const validIds = new Set<number>();
+                exercises.forEach(ex => {
+                    ex.sets.forEach(s => {
+                        if (s.id) validIds.add(s.id);
+                    });
+                });
+
+                // Identify sets that are in DB but NOT in UI (Deleted by user)
+                const idsToDelete = storedSets
+                    .filter(s => s.id && !validIds.has(s.id))
+                    .map(s => s.id as number);
+
+                // Execute Bulk Delete
+                if (idsToDelete.length > 0) {
+                    await db.sets.bulkDelete(idsToDelete);
+                }
+
+                // --- STEP 2: SAVE/UPDATE (Existing Logic) ---
                 for (const block of exercises) {
                     // Skip empty blocks
                     if (block.sets.length === 0) continue;
@@ -271,7 +293,7 @@ export default function WorkoutPage({
                     // Ensure exercise exists in exercises table
                     await getOrCreateExercise(block.name);
 
-                    // 2. Loop through Sets with Index to force correct Set Number
+                    // Loop through Sets with Index to force correct Set Number
                     for (let i = 0; i < block.sets.length; i++) {
                         const set = block.sets[i];
                         const setNumber = i + 1; // Trust UI order
@@ -299,7 +321,7 @@ export default function WorkoutPage({
                     }
                 }
 
-                // 3. Mark Workout as Completed
+                // --- STEP 3: Mark Workout as Completed ---
                 await db.workouts.update(workoutId, {
                     completedAt: new Date().toISOString(),
                 });
