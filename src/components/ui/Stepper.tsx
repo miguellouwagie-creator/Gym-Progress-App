@@ -8,7 +8,6 @@ interface StepperProps {
     min?: number;
     max?: number;
     step?: number;
-    label?: string;
     unit?: string;
 }
 
@@ -18,7 +17,6 @@ export function Stepper({
     min = 0,
     max = 999,
     step = 1,
-    label,
     unit,
 }: StepperProps) {
     const decrement = () => {
@@ -32,96 +30,74 @@ export function Stepper({
     };
 
     return (
-        <div className="flex flex-col gap-2">
-            {label && (
-                <span className="text-sm text-[#8E8E93] font-medium">{label}</span>
-            )}
-            <div className="flex items-center gap-3">
-                {/* Decrement Button */}
-                <button
-                    type="button"
-                    onClick={decrement}
-                    className="
-            w-14 h-14 rounded-xl bg-[#1C1C1E] border border-[#38383A]
-            flex items-center justify-center
-            active:scale-95 active:bg-[#2C2C2E]
-            transition-all duration-150
-            touch-target
-          "
-                >
-                    <Minus className="w-6 h-6 text-[#0A84FF]" />
-                </button>
+        <div className="flex items-center gap-2">
+            {/* Decrement Button */}
+            <button
+                type="button"
+                onClick={decrement}
+                className="
+          w-12 h-12 rounded-lg bg-[#09090b] border border-[#27272a]
+          flex items-center justify-center
+          active:scale-95 active:border-[#FF0000]
+          transition-all duration-100
+        "
+            >
+                <Minus className="w-5 h-5 text-[#a1a1aa]" />
+            </button>
 
-                {/* Value Display */}
-                <div className="flex-1 text-center">
-                    <span className="text-3xl font-bold text-white tabular-nums">
-                        {value}
-                    </span>
-                    {unit && (
-                        <span className="text-lg text-[#8E8E93] ml-1">{unit}</span>
-                    )}
-                </div>
-
-                {/* Increment Button */}
-                <button
-                    type="button"
-                    onClick={increment}
-                    className="
-            w-14 h-14 rounded-xl bg-[#1C1C1E] border border-[#38383A]
-            flex items-center justify-center
-            active:scale-95 active:bg-[#2C2C2E]
-            transition-all duration-150
-            touch-target
-          "
-                >
-                    <Plus className="w-6 h-6 text-[#30D158]" />
-                </button>
+            {/* Value Display */}
+            <div className="flex-1 text-center min-w-[60px]">
+                <span className="text-2xl font-bold text-white tabular-nums">
+                    {value}
+                </span>
+                {unit && (
+                    <span className="text-sm text-[#71717a] ml-1">{unit}</span>
+                )}
             </div>
+
+            {/* Increment Button */}
+            <button
+                type="button"
+                onClick={increment}
+                className="
+          w-12 h-12 rounded-lg bg-[#09090b] border border-[#27272a]
+          flex items-center justify-center
+          active:scale-95 active:border-[#FF0000]
+          transition-all duration-100
+        "
+            >
+                <Plus className="w-5 h-5 text-[#FF0000]" />
+            </button>
         </div>
     );
 }
 
-// Weight-specific stepper with decimal support
 export function WeightStepper({
     value,
     onChange,
-    label = 'Weight',
 }: {
     value: number;
     onChange: (value: number) => void;
-    label?: string;
 }) {
     return (
-        <Stepper
-            value={value}
-            onChange={onChange}
-            min={0}
-            max={500}
-            step={2.5}
-            label={label}
-            unit="kg"
-        />
+        <div>
+            <span className="text-xs text-[#71717a] uppercase tracking-wide mb-1 block">Weight</span>
+            <Stepper value={value} onChange={onChange} min={0} max={500} step={2.5} unit="kg" />
+        </div>
     );
 }
 
-// Reps-specific stepper
 export function RepsStepper({
     value,
     onChange,
-    label = 'Reps',
 }: {
     value: number;
     onChange: (value: number) => void;
-    label?: string;
 }) {
     return (
-        <Stepper
-            value={value}
-            onChange={onChange}
-            min={0}
-            max={100}
-            step={1}
-            label={label}
-        />
+        <div>
+            <span className="text-xs text-[#71717a] uppercase tracking-wide mb-1 block">Reps</span>
+            <Stepper value={value} onChange={onChange} min={0} max={100} step={1} />
+        </div>
     );
 }

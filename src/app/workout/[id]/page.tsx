@@ -1,26 +1,35 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Check, History, ChevronDown, ChevronUp } from 'lucide-react';
+import { useEffect, useState, useRef, use } from 'react';
+import { useRouter } from 'next/navigation';
+import { ArrowLeft, Plus, Check, Trash2, X } from 'lucide-react';
 import { Button, Card, WeightStepper, RepsStepper } from '@/components/ui';
-import { StaggerContainer, StaggerItem } from '@/components/PageTransition';
 import {
-    getRoutineForDay,
-    getLastSetForExercise,
+    db,
+    searchExercises,
     logSet,
-    finishWorkout,
     getSetsForWorkout,
+    getPreviousSetsForExercise,
+    finishWorkout,
+    updateSet,
+    deleteSet,
     type ExerciseSet,
+    type Exercise,
+    type Workout,
 } from '@/lib/db';
 
-interface ExerciseData {
+interface SetRow {
+    id?: number;
+    weight: number;
+    reps: number;
+    isNew?: boolean;
+}
+
+interface ExerciseBlock {
     name: string;
-    lastSet: ExerciseSet | null;
-    currentWeight: number;
-    currentReps: number;
-    setsLogged: number;
-    isExpanded: boolean;
+    sets: SetRow[];
+    previousSets: { weight: number; reps: number }[];
+    isEditing: boolean;
 }
 
 export default function WorkoutPage({
@@ -31,94 +40,164 @@ export default function WorkoutPage({
     const { id } = use(params);
     const workoutId = parseInt(id);
     const router = useRouter();
-    const searchParams = useSearchParams();
 
-    const routineName = searchParams.get('routine') || 'Workout';
-    const dayOfWeek = parseInt(searchParams.get('day') || '0');
-
-    const [exercises, setExercises] = useState<ExerciseData[]>([]);
+    const [workout, setWorkout] = useState<Workout | null>(null);
+    const [exercises, setExercises] = useState<ExerciseBlock[]>([]);
+    const [newExerciseName, setNewExerciseName] = useState('');
+    const [suggestions, setSuggestions] = useState<Exercise[]>([]);
+    const [showSuggestions, setShowSuggestions] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
-        async function loadExercises() {
-            const routine = await getRoutineForDay(dayOfWeek);
-            if (!routine) {
+        async function load() {
+            const w = await db.workouts.get(workoutId);
+            if (!w) {
                 router.push('/');
                 return;
             }
+            setWorkout(w);
 
-            // Get previously logged sets for this workout
-            const existingSets = await getSetsForWorkout(workoutId);
+            // Load existing sets grouped by exercise
+            const sets = await getSetsForWorkout(workoutId);
+            const grouped = new Map<string, ExerciseSet[]>();
 
-            // Load last session data for each exercise
-            const exerciseData: ExerciseData[] = await Promise.all(
-                routine.exercises.map(async (name) => {
-                    const lastSet = await getLastSetForExercise(name);
-                    const setsForExercise = existingSets.filter(s => s.exerciseName === name);
+            sets.forEach(set => {
+                const group = grouped.get(set.exerciseName) || [];
+                group.push(set);
+                grouped.set(set.exerciseName, group);
+            });
 
-                    return {
-                        name,
-                        lastSet,
-                        currentWeight: lastSet?.weight || 20,
-                        currentReps: lastSet?.reps || 8,
-                        setsLogged: setsForExercise.length,
-                        isExpanded: false,
-                    };
-                })
-            );
-
-            // Expand first exercise by default
-            if (exerciseData.length > 0) {
-                exerciseData[0].isExpanded = true;
+            const blocks: ExerciseBlock[] = [];
+            for (const [name, exerciseSets] of grouped) {
+                const previous = await getPreviousSetsForExercise(name, workoutId);
+                blocks.push({
+                    name,
+                    sets: exerciseSets.map(s => ({ id: s.id, weight: s.weight, reps: s.reps })),
+                    previousSets: previous.map(s => ({ weight: s.weight, reps: s.reps })),
+                    isEditing: false,
+                });
             }
 
-            setExercises(exerciseData);
+            setExercises(blocks);
             setLoading(false);
         }
+        load();
+    }, [workoutId, router]);
 
-        loadExercises();
-    }, [dayOfWeek, router, workoutId]);
+    // Autocomplete search
+    useEffect(() => {
+        async function search() {
+            if (newExerciseName.length > 0) {
+                const results = await searchExercises(newExerciseName, 5);
+                setSuggestions(results);
+                setShowSuggestions(results.length > 0);
+            } else {
+                // Show recent when empty
+                const recent = await searchExercises('', 5);
+                setSuggestions(recent);
+                setShowSuggestions(false);
+            }
+        }
+        search();
+    }, [newExerciseName]);
 
-    const toggleExpand = (index: number) => {
-        setExercises(prev => prev.map((ex, i) => ({
-            ...ex,
-            isExpanded: i === index ? !ex.isExpanded : false,
-        })));
+    const addExercise = async (name: string) => {
+        if (!name.trim()) return;
+
+        // Check if already added
+        if (exercises.some(e => e.name.toLowerCase() === name.toLowerCase())) {
+            setNewExerciseName('');
+            setShowSuggestions(false);
+            return;
+        }
+
+        const previous = await getPreviousSetsForExercise(name, workoutId);
+        const defaultWeight = previous[0]?.weight || 20;
+        const defaultReps = previous[0]?.reps || 8;
+
+        setExercises(prev => [...prev, {
+            name: name.trim(),
+            sets: [{ weight: defaultWeight, reps: defaultReps, isNew: true }],
+            previousSets: previous.map(s => ({ weight: s.weight, reps: s.reps })),
+            isEditing: true,
+        }]);
+
+        setNewExerciseName('');
+        setShowSuggestions(false);
     };
 
-    const updateWeight = (index: number, value: number) => {
-        setExercises(prev => prev.map((ex, i) =>
-            i === index ? { ...ex, currentWeight: value } : ex
-        ));
+    const addSet = (exerciseIndex: number) => {
+        setExercises(prev => prev.map((ex, i) => {
+            if (i !== exerciseIndex) return ex;
+            const lastSet = ex.sets[ex.sets.length - 1] || { weight: 20, reps: 8 };
+            return {
+                ...ex,
+                sets: [...ex.sets, { weight: lastSet.weight, reps: lastSet.reps, isNew: true }],
+            };
+        }));
     };
 
-    const updateReps = (index: number, value: number) => {
-        setExercises(prev => prev.map((ex, i) =>
-            i === index ? { ...ex, currentReps: value } : ex
-        ));
+    const updateSetValue = (exerciseIndex: number, setIndex: number, field: 'weight' | 'reps', value: number) => {
+        setExercises(prev => prev.map((ex, i) => {
+            if (i !== exerciseIndex) return ex;
+            return {
+                ...ex,
+                sets: ex.sets.map((s, j) =>
+                    j === setIndex ? { ...s, [field]: value } : s
+                ),
+            };
+        }));
     };
 
-    const handleLogSet = async (index: number) => {
-        setSaving(true);
-        const exercise = exercises[index];
+    const handleDeleteSet = async (exerciseIndex: number, setIndex: number) => {
+        const ex = exercises[exerciseIndex];
+        const set = ex.sets[setIndex];
 
-        await logSet(
-            workoutId,
-            exercise.name,
-            exercise.currentWeight,
-            exercise.currentReps,
-            false
-        );
+        if (set.id) {
+            await deleteSet(set.id);
+        }
 
-        setExercises(prev => prev.map((ex, i) =>
-            i === index ? { ...ex, setsLogged: ex.setsLogged + 1 } : ex
-        ));
-
-        setSaving(false);
+        setExercises(prev => prev.map((e, i) => {
+            if (i !== exerciseIndex) return e;
+            const newSets = e.sets.filter((_, j) => j !== setIndex);
+            return { ...e, sets: newSets };
+        }).filter(e => e.sets.length > 0));
     };
 
-    const handleFinishWorkout = async () => {
+    const saveSet = async (exerciseIndex: number, setIndex: number) => {
+        const ex = exercises[exerciseIndex];
+        const set = ex.sets[setIndex];
+
+        if (set.id) {
+            // Update existing
+            await updateSet(set.id, set.weight, set.reps);
+        } else {
+            // Create new
+            const newId = await logSet(workoutId, ex.name, set.weight, set.reps);
+            setExercises(prev => prev.map((e, i) => {
+                if (i !== exerciseIndex) return e;
+                return {
+                    ...e,
+                    sets: e.sets.map((s, j) =>
+                        j === setIndex ? { ...s, id: newId, isNew: false } : s
+                    ),
+                };
+            }));
+        }
+    };
+
+    const handleFinish = async () => {
+        // Save all unsaved sets
+        for (let i = 0; i < exercises.length; i++) {
+            for (let j = 0; j < exercises[i].sets.length; j++) {
+                const set = exercises[i].sets[j];
+                if (!set.id) {
+                    await logSet(workoutId, exercises[i].name, set.weight, set.reps);
+                }
+            }
+        }
+
         await finishWorkout(workoutId);
         router.push('/');
     };
@@ -126,120 +205,153 @@ export default function WorkoutPage({
     if (loading) {
         return (
             <div className="flex items-center justify-center h-[60vh]">
-                <div className="w-8 h-8 border-3 border-[#0A84FF] border-t-transparent rounded-full animate-spin" />
+                <div className="w-8 h-8 border-2 border-[#FF0000] border-t-transparent rounded-full animate-spin" />
             </div>
         );
     }
 
     return (
-        <div className="pb-8">
+        <div className="pb-24">
             {/* Header */}
-            <div className="flex items-center gap-4 mb-6">
+            <div className="flex items-center gap-3 mb-6">
                 <button
                     onClick={() => router.push('/')}
-                    className="w-10 h-10 rounded-xl bg-[#1C1C1E] flex items-center justify-center touch-target"
+                    className="w-10 h-10 rounded-lg bg-[#09090b] border border-[#27272a] flex items-center justify-center"
                 >
                     <ArrowLeft className="w-5 h-5 text-white" />
                 </button>
-                <div>
-                    <h1 className="text-xl font-bold text-white">{routineName}</h1>
-                    <p className="text-sm text-[#8E8E93]">{exercises.length} exercises</p>
+                <div className="flex-1">
+                    <h1 className="text-lg font-bold text-white">{workout?.name}</h1>
+                    <p className="text-xs text-[#71717a]">
+                        {new Date(workout?.startedAt || '').toLocaleDateString()}
+                    </p>
                 </div>
-            </div>
-
-            {/* Exercise List */}
-            <StaggerContainer>
-                <div className="space-y-3">
-                    {exercises.map((exercise, index) => (
-                        <StaggerItem key={exercise.name}>
-                            <Card className="overflow-hidden">
-                                {/* Exercise Header (always visible) */}
-                                <button
-                                    onClick={() => toggleExpand(index)}
-                                    className="w-full flex items-center justify-between touch-target"
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-lg bg-[#0A84FF]/20 flex items-center justify-center">
-                                            <span className="text-sm font-bold text-[#0A84FF]">{index + 1}</span>
-                                        </div>
-                                        <div className="text-left">
-                                            <h3 className="font-semibold text-white">{exercise.name}</h3>
-                                            {exercise.setsLogged > 0 && (
-                                                <p className="text-xs text-[#30D158]">
-                                                    {exercise.setsLogged} set{exercise.setsLogged > 1 ? 's' : ''} logged
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {exercise.lastSet && !exercise.isExpanded && (
-                                            <span className="text-xs text-[#8E8E93]">
-                                                {exercise.lastSet.weight}kg × {exercise.lastSet.reps}
-                                            </span>
-                                        )}
-                                        {exercise.isExpanded ? (
-                                            <ChevronUp className="w-5 h-5 text-[#636366]" />
-                                        ) : (
-                                            <ChevronDown className="w-5 h-5 text-[#636366]" />
-                                        )}
-                                    </div>
-                                </button>
-
-                                {/* Expanded Content */}
-                                {exercise.isExpanded && (
-                                    <div className="mt-4 pt-4 border-t border-[#38383A]">
-                                        {/* Last Session Info */}
-                                        {exercise.lastSet && (
-                                            <div className="flex items-center gap-2 mb-4 p-3 rounded-xl bg-[#2C2C2E]">
-                                                <History className="w-4 h-4 text-[#8E8E93]" />
-                                                <span className="text-sm text-[#8E8E93]">Last session:</span>
-                                                <span className="text-sm font-semibold text-white">
-                                                    {exercise.lastSet.weight}kg × {exercise.lastSet.reps} reps
-                                                </span>
-                                            </div>
-                                        )}
-
-                                        {/* Steppers */}
-                                        <div className="grid grid-cols-2 gap-4 mb-4">
-                                            <WeightStepper
-                                                value={exercise.currentWeight}
-                                                onChange={(v) => updateWeight(index, v)}
-                                            />
-                                            <RepsStepper
-                                                value={exercise.currentReps}
-                                                onChange={(v) => updateReps(index, v)}
-                                            />
-                                        </div>
-
-                                        {/* Log Set Button */}
-                                        <Button
-                                            variant="accent"
-                                            size="lg"
-                                            onClick={() => handleLogSet(index)}
-                                            disabled={saving}
-                                        >
-                                            <Check className="w-5 h-5" />
-                                            Log Set ({exercise.setsLogged + 1})
-                                        </Button>
-                                    </div>
-                                )}
-                            </Card>
-                        </StaggerItem>
-                    ))}
-                </div>
-            </StaggerContainer>
-
-            {/* Finish Workout */}
-            <div className="mt-8">
-                <Button
-                    variant="primary"
-                    size="lg"
-                    onClick={handleFinishWorkout}
-                    className="glow-primary"
-                >
-                    Finish Workout
+                <Button variant="primary" size="sm" onClick={handleFinish}>
+                    <Check className="w-4 h-4" />
+                    Finish
                 </Button>
             </div>
+
+            {/* Add Exercise Input */}
+            <div className="relative mb-6">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={newExerciseName}
+                    onChange={(e) => setNewExerciseName(e.target.value)}
+                    onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') addExercise(newExerciseName);
+                    }}
+                    placeholder="Add exercise (e.g., Bench Press)"
+                    className="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-white placeholder:text-[#3f3f46] focus:border-[#FF0000] transition-colors"
+                />
+
+                {/* Suggestions Dropdown */}
+                {showSuggestions && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-[#09090b] border border-[#27272a] rounded-lg overflow-hidden z-10">
+                        {suggestions.map((ex) => (
+                            <button
+                                key={ex.id}
+                                onClick={() => addExercise(ex.name)}
+                                className="w-full px-4 py-3 text-left text-white hover:bg-[#18181b] transition-colors border-b border-[#27272a] last:border-0"
+                            >
+                                {ex.name}
+                            </button>
+                        ))}
+                        {newExerciseName && !suggestions.some(s => s.name.toLowerCase() === newExerciseName.toLowerCase()) && (
+                            <button
+                                onClick={() => addExercise(newExerciseName)}
+                                className="w-full px-4 py-3 text-left text-[#FF0000] hover:bg-[#18181b] transition-colors flex items-center gap-2"
+                            >
+                                <Plus className="w-4 h-4" />
+                                Create "{newExerciseName}"
+                            </button>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Exercise Blocks */}
+            <div className="space-y-4">
+                {exercises.map((exercise, exerciseIndex) => (
+                    <Card key={`${exercise.name}-${exerciseIndex}`}>
+                        {/* Exercise Header */}
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-bold text-white">{exercise.name}</h3>
+                            <button
+                                onClick={() => addSet(exerciseIndex)}
+                                className="text-xs text-[#FF0000] font-medium flex items-center gap-1"
+                            >
+                                <Plus className="w-3 h-3" />
+                                Add Set
+                            </button>
+                        </div>
+
+                        {/* Previous Session Stats */}
+                        {exercise.previousSets.length > 0 && (
+                            <p className="text-xs text-[#DC2626] mb-3">
+                                Previous: {exercise.previousSets.map(s => `${s.weight}kg × ${s.reps}`).join(' | ')}
+                            </p>
+                        )}
+
+                        {/* Sets */}
+                        <div className="space-y-2">
+                            {exercise.sets.map((set, setIndex) => (
+                                <div
+                                    key={setIndex}
+                                    className="flex items-center gap-2 p-2 rounded-lg bg-[#18181b] group"
+                                >
+                                    <span className="w-6 text-center text-xs text-[#71717a]">{setIndex + 1}</span>
+
+                                    {/* Weight */}
+                                    <div className="flex-1">
+                                        <WeightStepper
+                                            value={set.weight}
+                                            onChange={(v) => updateSetValue(exerciseIndex, setIndex, 'weight', v)}
+                                        />
+                                    </div>
+
+                                    <span className="text-[#3f3f46]">×</span>
+
+                                    {/* Reps */}
+                                    <div className="flex-1">
+                                        <RepsStepper
+                                            value={set.reps}
+                                            onChange={(v) => updateSetValue(exerciseIndex, setIndex, 'reps', v)}
+                                        />
+                                    </div>
+
+                                    {/* Save/Delete */}
+                                    <div className="flex gap-1">
+                                        {set.isNew && (
+                                            <button
+                                                onClick={() => saveSet(exerciseIndex, setIndex)}
+                                                className="w-8 h-8 rounded flex items-center justify-center text-[#22c55e] hover:bg-[#22c55e]/10"
+                                            >
+                                                <Check className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => handleDeleteSet(exerciseIndex, setIndex)}
+                                            className="w-8 h-8 rounded flex items-center justify-center text-[#ef4444] hover:bg-[#ef4444]/10"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </Card>
+                ))}
+            </div>
+
+            {/* Empty State */}
+            {exercises.length === 0 && (
+                <div className="text-center py-16">
+                    <p className="text-[#3f3f46]">Type an exercise name above to begin</p>
+                </div>
+            )}
         </div>
     );
 }

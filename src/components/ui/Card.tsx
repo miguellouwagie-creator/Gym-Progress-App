@@ -6,32 +6,26 @@ interface CardProps {
     children: ReactNode;
     className?: string;
     onClick?: () => void;
-    elevated?: boolean;
-    glow?: 'primary' | 'accent' | null;
+    active?: boolean;
 }
 
 export function Card({
     children,
     className = '',
     onClick,
-    elevated = false,
-    glow = null,
+    active = false,
 }: CardProps) {
     const baseStyles = `
-    rounded-2xl p-4 transition-all duration-200
-    ${elevated ? 'bg-[#2C2C2E]' : 'bg-[#1C1C1E]'}
+    rounded-lg p-4 transition-all duration-150
+    bg-[#09090b] border border-[#27272a]
     ${onClick ? 'cursor-pointer active:scale-[0.98]' : ''}
+    ${active ? 'border-[#FF0000] shadow-[0_0_15px_rgba(255,0,0,0.2)]' : ''}
   `;
-
-    const glowStyles = {
-        primary: 'ring-2 ring-[#0A84FF] shadow-[0_0_20px_rgba(10,132,255,0.3)]',
-        accent: 'ring-2 ring-[#30D158] shadow-[0_0_20px_rgba(48,209,88,0.3)]',
-    };
 
     return (
         <div
             onClick={onClick}
-            className={`${baseStyles} ${glow ? glowStyles[glow] : ''} ${className}`}
+            className={`${baseStyles} ${className}`}
         >
             {children}
         </div>

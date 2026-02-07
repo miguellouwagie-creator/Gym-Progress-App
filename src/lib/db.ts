@@ -7,52 +7,44 @@ import Dexie, { type EntityTable } from 'dexie';
 export interface Workout {
   id?: number;
   date: string; // ISO date string (YYYY-MM-DD)
-  routineName: string;
-  completedAt?: string; // ISO timestamp when finished
+  name: string; // User-defined name
+  startedAt: string;
+  completedAt?: string;
 }
 
 export interface ExerciseSet {
   id?: number;
   workoutId: number;
   exerciseName: string;
+  setNumber: number;
   weight: number;
   reps: number;
-  isDropSet: boolean;
-  timestamp: string; // ISO timestamp
+  timestamp: string;
 }
 
 export interface Exercise {
   id?: number;
-  name: string;
-  muscleGroup: string;
-}
-
-export interface RoutineExercise {
-  id?: number;
-  dayOfWeek: number; // 0 = Monday, 6 = Sunday
-  routineName: string;
-  exerciseName: string;
-  order: number;
+  name: string; // User-created, lowercase for matching
+  createdAt: string;
+  lastUsedAt: string;
 }
 
 // ============================================================================
-// DATABASE
+// DATABASE - TABULA RASA (No Pre-seeded Data)
 // ============================================================================
 
 class TitanLogDB extends Dexie {
   workouts!: EntityTable<Workout, 'id'>;
   sets!: EntityTable<ExerciseSet, 'id'>;
   exercises!: EntityTable<Exercise, 'id'>;
-  routineExercises!: EntityTable<RoutineExercise, 'id'>;
 
   constructor() {
     super('TitanLogDB');
 
-    this.version(1).stores({
-      workouts: '++id, date, routineName',
+    this.version(2).stores({
+      workouts: '++id, date, name, startedAt',
       sets: '++id, workoutId, exerciseName, timestamp',
-      exercises: '++id, name, muscleGroup',
-      routineExercises: '++id, dayOfWeek, routineName, exerciseName',
+      exercises: '++id, name, lastUsedAt',
     });
   }
 }
@@ -60,142 +52,70 @@ class TitanLogDB extends Dexie {
 export const db = new TitanLogDB();
 
 // ============================================================================
-// SEED DATA - 7-Day Workout Split
+// EXERCISE HELPERS - ON-THE-FLY CREATION
 // ============================================================================
 
-const WEEKLY_ROUTINE = [
-  {
-    dayOfWeek: 0, // Monday
-    routineName: 'Push Day',
-    exercises: ['Bench Press', 'Overhead Press', 'Incline Dumbbell Press', 'Lateral Raises', 'Tricep Pushdowns', 'Skull Crushers'],
-  },
-  {
-    dayOfWeek: 1, // Tuesday
-    routineName: 'Pull Day',
-    exercises: ['Deadlift', 'Barbell Rows', 'Lat Pulldowns', 'Face Pulls', 'Barbell Curls', 'Hammer Curls'],
-  },
-  {
-    dayOfWeek: 2, // Wednesday
-    routineName: 'Leg Day',
-    exercises: ['Squats', 'Romanian Deadlifts', 'Leg Press', 'Leg Curls', 'Calf Raises', 'Leg Extensions'],
-  },
-  {
-    dayOfWeek: 3, // Thursday
-    routineName: 'Upper Body',
-    exercises: ['Incline Bench Press', 'Cable Rows', 'Dumbbell Shoulder Press', 'Pull-ups', 'Dips', 'Face Pulls'],
-  },
-  {
-    dayOfWeek: 4, // Friday
-    routineName: 'Lower Body',
-    exercises: ['Front Squats', 'Hip Thrusts', 'Walking Lunges', 'Leg Press', 'Seated Calf Raises', 'Leg Curls'],
-  },
-  {
-    dayOfWeek: 5, // Saturday
-    routineName: 'Arms & Core',
-    exercises: ['Barbell Curls', 'Tricep Dips', 'Preacher Curls', 'Overhead Tricep Extension', 'Cable Crunches', 'Hanging Leg Raises'],
-  },
-  {
-    dayOfWeek: 6, // Sunday
-    routineName: 'Rest Day',
-    exercises: [],
-  },
-];
+/**
+ * Get or create an exercise by name.
+ * If it doesn't exist, creates it instantly.
+ */
+export async function getOrCreateExercise(name: string): Promise<Exercise> {
+  const normalized = name.trim();
+  if (!normalized) throw new Error('Exercise name required');
 
-export async function seedDatabase() {
-  const count = await db.routineExercises.count();
-  if (count > 0) return; // Already seeded
+  // Search case-insensitive
+  const existing = await db.exercises
+    .filter(e => e.name.toLowerCase() === normalized.toLowerCase())
+    .first();
 
-  // Seed routine exercises
-  for (const day of WEEKLY_ROUTINE) {
-    for (let i = 0; i < day.exercises.length; i++) {
-      await db.routineExercises.add({
-        dayOfWeek: day.dayOfWeek,
-        routineName: day.routineName,
-        exerciseName: day.exercises[i],
-        order: i,
-      });
-    }
-    // For rest day, add a placeholder
-    if (day.exercises.length === 0) {
-      await db.routineExercises.add({
-        dayOfWeek: day.dayOfWeek,
-        routineName: day.routineName,
-        exerciseName: '',
-        order: 0,
-      });
-    }
+  if (existing) {
+    // Update last used
+    await db.exercises.update(existing.id!, { lastUsedAt: new Date().toISOString() });
+    return existing;
   }
+
+  // Create new exercise on-the-fly
+  const id = await db.exercises.add({
+    name: normalized,
+    createdAt: new Date().toISOString(),
+    lastUsedAt: new Date().toISOString(),
+  });
+
+  return { id: id as number, name: normalized, createdAt: new Date().toISOString(), lastUsedAt: new Date().toISOString() };
+}
+
+/**
+ * Search exercises for autocomplete.
+ * Returns most recently used first.
+ */
+export async function searchExercises(query: string, limit: number = 10): Promise<Exercise[]> {
+  const normalized = query.trim().toLowerCase();
+
+  if (!normalized) {
+    // Return most recent exercises
+    return db.exercises.orderBy('lastUsedAt').reverse().limit(limit).toArray();
+  }
+
+  const all = await db.exercises.toArray();
+  return all
+    .filter(e => e.name.toLowerCase().includes(normalized))
+    .sort((a, b) => new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime())
+    .slice(0, limit);
 }
 
 // ============================================================================
-// HELPER FUNCTIONS
+// WORKOUT HELPERS
 // ============================================================================
 
-export function getDayOfWeek(): number {
-  const jsDay = new Date().getDay(); // 0 = Sunday
-  return jsDay === 0 ? 6 : jsDay - 1; // Convert to 0 = Monday
-}
-
-export async function getRoutineForDay(dayOfWeek: number) {
-  const exercises = await db.routineExercises
-    .where('dayOfWeek')
-    .equals(dayOfWeek)
-    .sortBy('order');
-
-  if (exercises.length === 0) return null;
-
-  return {
-    routineName: exercises[0].routineName,
-    exercises: exercises.filter(e => e.exerciseName !== '').map(e => e.exerciseName),
-  };
-}
-
-export async function getLastSetForExercise(exerciseName: string): Promise<ExerciseSet | null> {
-  const sets = await db.sets
-    .where('exerciseName')
-    .equals(exerciseName)
-    .reverse()
-    .sortBy('timestamp');
-
-  return sets[0] || null;
-}
-
-export async function getTodayWorkout(): Promise<Workout | null> {
-  const today = new Date().toISOString().split('T')[0];
-  const workouts = await db.workouts.where('date').equals(today).toArray();
-  return workouts[0] || null;
-}
-
-export async function startWorkout(routineName: string): Promise<number> {
+export async function startWorkout(name: string = 'Workout'): Promise<number> {
   const today = new Date().toISOString().split('T')[0];
 
-  // Check if workout already exists
-  const existing = await getTodayWorkout();
-  if (existing?.id) return existing.id;
-
-  // Create new workout
   const id = await db.workouts.add({
     date: today,
-    routineName,
+    name,
+    startedAt: new Date().toISOString(),
   });
-  return id as number;
-}
 
-export async function logSet(
-  workoutId: number,
-  exerciseName: string,
-  weight: number,
-  reps: number,
-  isDropSet: boolean = false
-): Promise<number> {
-  const id = await db.sets.add({
-    workoutId,
-    exerciseName,
-    weight,
-    reps,
-    isDropSet,
-    timestamp: new Date().toISOString(),
-  });
   return id as number;
 }
 
@@ -205,17 +125,123 @@ export async function finishWorkout(workoutId: number): Promise<void> {
   });
 }
 
-export async function getWorkoutHistory(limit: number = 30): Promise<Workout[]> {
-  return await db.workouts
-    .orderBy('date')
+export async function getActiveWorkout(): Promise<Workout | null> {
+  // Find workout started today that isn't completed
+  const today = new Date().toISOString().split('T')[0];
+  const workouts = await db.workouts
+    .where('date')
+    .equals(today)
+    .filter(w => !w.completedAt)
+    .toArray();
+
+  return workouts[0] || null;
+}
+
+export async function getWorkoutHistory(limit: number = 50): Promise<Workout[]> {
+  return db.workouts
+    .orderBy('startedAt')
     .reverse()
     .limit(limit)
     .toArray();
 }
 
-export async function getSetsForWorkout(workoutId: number): Promise<ExerciseSet[]> {
-  return await db.sets
+// ============================================================================
+// SET HELPERS
+// ============================================================================
+
+export async function logSet(
+  workoutId: number,
+  exerciseName: string,
+  weight: number,
+  reps: number
+): Promise<number> {
+  // Ensure exercise exists
+  await getOrCreateExercise(exerciseName);
+
+  // Count existing sets for this exercise in this workout
+  const existingSets = await db.sets
     .where('workoutId')
     .equals(workoutId)
+    .filter(s => s.exerciseName.toLowerCase() === exerciseName.toLowerCase())
+    .count();
+
+  const id = await db.sets.add({
+    workoutId,
+    exerciseName,
+    setNumber: existingSets + 1,
+    weight,
+    reps,
+    timestamp: new Date().toISOString(),
+  });
+
+  return id as number;
+}
+
+export async function updateSet(
+  setId: number,
+  weight: number,
+  reps: number
+): Promise<void> {
+  await db.sets.update(setId, { weight, reps });
+}
+
+export async function deleteSet(setId: number): Promise<void> {
+  await db.sets.delete(setId);
+}
+
+export async function getSetsForWorkout(workoutId: number): Promise<ExerciseSet[]> {
+  return db.sets
+    .where('workoutId')
+    .equals(workoutId)
+    .sortBy('timestamp');
+}
+
+/**
+ * Get the previous session's sets for a specific exercise.
+ * Used to show "Previous: 100kg x 8" in red.
+ */
+export async function getPreviousSetsForExercise(
+  exerciseName: string,
+  excludeWorkoutId?: number
+): Promise<ExerciseSet[]> {
+  const normalized = exerciseName.toLowerCase();
+
+  // Get all sets for this exercise, excluding current workout
+  const allSets = await db.sets
+    .filter(s => s.exerciseName.toLowerCase() === normalized)
     .toArray();
+
+  // Filter out current workout and group by workoutId
+  const previousSets = allSets.filter(s => s.workoutId !== excludeWorkoutId);
+
+  if (previousSets.length === 0) return [];
+
+  // Find the most recent workout that had this exercise
+  const sortedByTime = previousSets.sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
+  const lastWorkoutId = sortedByTime[0]?.workoutId;
+  if (!lastWorkoutId) return [];
+
+  // Return all sets from that workout for this exercise
+  return previousSets
+    .filter(s => s.workoutId === lastWorkoutId)
+    .sort((a, b) => a.setNumber - b.setNumber);
+}
+
+// ============================================================================
+// STATS
+// ============================================================================
+
+export async function getTotalWorkouts(): Promise<number> {
+  return db.workouts.count();
+}
+
+export async function getTotalSets(): Promise<number> {
+  return db.sets.count();
+}
+
+export async function getExerciseCount(): Promise<number> {
+  return db.exercises.count();
 }
