@@ -97,10 +97,17 @@ export default function WorkoutPage({
                 for (const ex of dayExercises.slice(0, 5)) {
                     const previous = await getPreviousSetsForExercise(ex.name, workoutId);
                     if (previous.length > 0) {
+                        // CLONE ALL SETS from previous session
                         blocks.push({
                             name: ex.name,
                             originalName: ex.name,
-                            sets: [{ weight: previous[0].weight, reps: previous[0].reps, isNew: true, isDirty: false }],
+                            sets: previous.map(prevSet => ({
+                                id: undefined,  // No ID - these are NEW sets for today
+                                weight: prevSet.weight,
+                                reps: prevSet.reps,
+                                isNew: true,
+                                isDirty: true,  // Mark dirty so they save
+                            })),
                             previousSets: previous.map(s => ({ weight: s.weight, reps: s.reps })),
                             isEditing: false,
                         });
@@ -139,13 +146,22 @@ export default function WorkoutPage({
         }
 
         const previous = await getPreviousSetsForExercise(name, workoutId);
-        const defaultWeight = previous[0]?.weight || 20;
-        const defaultReps = previous[0]?.reps || 8;
+
+        // CLONE ALL SETS from previous session, or create default
+        const sets = previous.length > 0
+            ? previous.map(prevSet => ({
+                id: undefined,
+                weight: prevSet.weight,
+                reps: prevSet.reps,
+                isNew: true,
+                isDirty: true,
+            }))
+            : [{ weight: 20, reps: 8, isNew: true, isDirty: false }];
 
         setExercises(prev => [...prev, {
             name: name.trim(),
             originalName: name.trim(),
-            sets: [{ weight: defaultWeight, reps: defaultReps, isNew: true, isDirty: false }],
+            sets,
             previousSets: previous.map(s => ({ weight: s.weight, reps: s.reps })),
             isEditing: false,
         }]);
