@@ -19,6 +19,7 @@ export interface ExerciseSet {
   setNumber: number;
   weight: number;
   reps: number;
+  dayOfWeek?: number; // 0 = Monday, 6 = Sunday - for day-based memory
   timestamp: string;
 }
 
@@ -41,9 +42,9 @@ class TitanLogDB extends Dexie {
   constructor() {
     super('TitanLogDB');
 
-    this.version(2).stores({
+    this.version(3).stores({
       workouts: '++id, date, name, startedAt',
-      sets: '++id, workoutId, exerciseName, timestamp',
+      sets: '++id, workoutId, exerciseName, dayOfWeek, timestamp',
       exercises: '++id, name, lastUsedAt',
     });
   }
@@ -153,7 +154,8 @@ export async function logSet(
   workoutId: number,
   exerciseName: string,
   weight: number,
-  reps: number
+  reps: number,
+  dayOfWeek?: number
 ): Promise<number> {
   // Ensure exercise exists
   await getOrCreateExercise(exerciseName);
@@ -171,6 +173,7 @@ export async function logSet(
     setNumber: existingSets + 1,
     weight,
     reps,
+    dayOfWeek,
     timestamp: new Date().toISOString(),
   });
 
@@ -244,4 +247,45 @@ export async function getTotalSets(): Promise<number> {
 
 export async function getExerciseCount(): Promise<number> {
   return db.exercises.count();
+}
+
+/**
+ * Get exercises that have been used on a specific day of the week.
+ * Returns exercises sorted by how recently they were used on that day.
+ */
+export async function getExercisesForDay(dayOfWeek: number, limit: number = 10): Promise<Exercise[]> {
+  // Get all sets from this day of week
+  const setsOnDay = await db.sets
+    .where('dayOfWeek')
+    .equals(dayOfWeek)
+    .toArray();
+
+  // Count exercise occurrences and find most recent usage
+  const exerciseMap = new Map<string, { count: number; lastUsed: string }>();
+
+  for (const set of setsOnDay) {
+    const key = set.exerciseName.toLowerCase();
+    const existing = exerciseMap.get(key);
+    if (!existing || set.timestamp > existing.lastUsed) {
+      exerciseMap.set(key, {
+        count: (existing?.count || 0) + 1,
+        lastUsed: set.timestamp,
+      });
+    }
+  }
+
+  // Get exercise records for these names
+  const exerciseNames = Array.from(exerciseMap.keys());
+  const exercises = await db.exercises
+    .filter(e => exerciseNames.includes(e.name.toLowerCase()))
+    .toArray();
+
+  // Sort by recent usage on this day
+  return exercises
+    .sort((a, b) => {
+      const aData = exerciseMap.get(a.name.toLowerCase());
+      const bData = exerciseMap.get(b.name.toLowerCase());
+      return (bData?.lastUsed || '').localeCompare(aData?.lastUsed || '');
+    })
+    .slice(0, limit);
 }
