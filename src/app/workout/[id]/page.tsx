@@ -92,7 +92,7 @@ export default function WorkoutPage({
                 });
             }
 
-            if (blocks.length === 0) {
+            if (blocks.length === 0 && !w.completedAt) {
                 const dayExercises = await getExercisesForDay(dayIndex);
                 for (const ex of dayExercises.slice(0, 5)) {
                     const previous = await getPreviousSetsForExercise(ex.name, workoutId);
