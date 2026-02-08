@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Dumbbell, ChevronRight, Flame, Moon, Plus } from 'lucide-react';
 import { Card } from '@/components/ui';
 import { StaggerContainer, StaggerItem } from '@/components/PageTransition';
-import { startWorkout } from '@/lib/db';
+import { getOrResumeWorkout } from '@/lib/db';
 
 // He eliminado "isRest" como bloqueo. Ahora es solo visual.
 const WEEKLY_SCHEDULE = [
@@ -32,11 +32,9 @@ export default function HomePage() {
   const handleDayClick = async (dayIndex: number, focus: string) => {
     setLoading(true);
 
-    // Creamos el entrenamiento para ese día.
-    // NOTA: Al entrar y añadir ejercicios, la app "aprenderá" y te los sugerirá
-    // automáticamente la próxima vez que entres en este día de la semana.
+    // Resume existing uncompleted workout for today, or create new one
     const workoutName = `${WEEKLY_SCHEDULE[dayIndex].name}: ${focus}`;
-    const workoutId = await startWorkout(workoutName);
+    const workoutId = await getOrResumeWorkout(dayIndex, workoutName);
 
     router.push(`/workout/${workoutId}?day=${dayIndex}&focus=${encodeURIComponent(focus)}`);
   };

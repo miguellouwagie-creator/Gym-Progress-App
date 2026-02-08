@@ -250,42 +250,82 @@ export async function getExerciseCount(): Promise<number> {
 }
 
 /**
- * Get exercises that have been used on a specific day of the week.
- * Returns exercises sorted by how recently they were used on that day.
+ * STRICT ROUTINE: Get exercises from the MOST RECENT COMPLETED workout for this day.
+ * This prevents deleted exercises from "resurrecting" - if you delete an exercise
+ * and save, it won't appear next week because it's not in the latest session.
  */
 export async function getExercisesForDay(dayOfWeek: number, limit: number = 10): Promise<Exercise[]> {
-  // Get all sets from this day of week
+  // Step 1: Find all sets for this day of week
   const setsOnDay = await db.sets
     .where('dayOfWeek')
     .equals(dayOfWeek)
     .toArray();
 
-  // Count exercise occurrences and find most recent usage
-  const exerciseMap = new Map<string, { count: number; lastUsed: string }>();
+  if (setsOnDay.length === 0) return [];
 
-  for (const set of setsOnDay) {
-    const key = set.exerciseName.toLowerCase();
-    const existing = exerciseMap.get(key);
-    if (!existing || set.timestamp > existing.lastUsed) {
-      exerciseMap.set(key, {
-        count: (existing?.count || 0) + 1,
-        lastUsed: set.timestamp,
-      });
+  // Step 2: Group sets by workoutId and find the most recent COMPLETED workout
+  const workoutIds = [...new Set(setsOnDay.map(s => s.workoutId))];
+  const workouts = await db.workouts.bulkGet(workoutIds);
+
+  // Filter to only completed workouts and sort by completedAt descending
+  const completedWorkouts = workouts
+    .filter((w): w is Workout => w !== undefined && !!w.completedAt)
+    .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
+
+  if (completedWorkouts.length === 0) return [];
+
+  // Step 3: Get exercises from the MOST RECENT completed workout only
+  const latestWorkoutId = completedWorkouts[0].id;
+  const latestSets = setsOnDay.filter(s => s.workoutId === latestWorkoutId);
+
+  // Extract unique exercise names (preserving order of appearance)
+  const exerciseNames: string[] = [];
+  for (const set of latestSets.sort((a, b) => a.setNumber - b.setNumber)) {
+    const normalized = set.exerciseName.toLowerCase();
+    if (!exerciseNames.includes(normalized)) {
+      exerciseNames.push(normalized);
     }
   }
 
-  // Get exercise records for these names
-  const exerciseNames = Array.from(exerciseMap.keys());
+  // Step 4: Get Exercise records for these names
   const exercises = await db.exercises
     .filter(e => exerciseNames.includes(e.name.toLowerCase()))
     .toArray();
 
-  // Sort by recent usage on this day
+  // Sort by order of appearance in the latest workout
   return exercises
     .sort((a, b) => {
-      const aData = exerciseMap.get(a.name.toLowerCase());
-      const bData = exerciseMap.get(b.name.toLowerCase());
-      return (bData?.lastUsed || '').localeCompare(aData?.lastUsed || '');
+      const aIndex = exerciseNames.indexOf(a.name.toLowerCase());
+      const bIndex = exerciseNames.indexOf(b.name.toLowerCase());
+      return aIndex - bIndex;
     })
     .slice(0, limit);
+}
+
+/**
+ * Resume an existing uncompleted workout for today, or create a new one.
+ * Prevents creating duplicate workouts when the user navigates back and forth.
+ */
+export async function getOrResumeWorkout(dayIndex: number, workoutName: string): Promise<number> {
+  const today = new Date().toISOString().split('T')[0];
+
+  // Look for an existing uncompleted workout from today
+  const existingWorkout = await db.workouts
+    .where('date')
+    .equals(today)
+    .filter(w => !w.completedAt)
+    .first();
+
+  if (existingWorkout && existingWorkout.id) {
+    return existingWorkout.id;
+  }
+
+  // No existing workout - create a new one
+  const id = await db.workouts.add({
+    date: today,
+    name: workoutName,
+    startedAt: new Date().toISOString(),
+  });
+
+  return id as number;
 }
